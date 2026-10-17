@@ -306,5 +306,33 @@ def test_api_end_to_end_on_postgres(database, pg_client, auth_headers):
     assert response.status_code == 404
     assert bob.get("/students").json() == []
 
-    assert alice.delete(f"/courses/{course['id']}").status_code == 204
+    stats = alice.get(f"/assignments/{assignment['id']}/stats").json()
+    assert (stats["count"], stats["mean"], stats["median"]) == (2, 11.625, 11.625)
+    assert bob.get(f"/assignments/{assignment['id']}/stats").status_code == 404
+
+    exported = alice.get(f"/courses/{course['id']}/gradebook/export")
+    assert exported.status_code == 200
+    assert (
+        exported.content.decode("utf-8-sig").splitlines()[1].startswith("Ana,ana@example.edu,11.25")
+    )
+    assert bob.get(f"/courses/{course['id']}/gradebook/export").status_code == 404
+
+    roster = b"name,email\nAna Again,ana@example.edu\nCy,cy@example.edu\n"
+
+    def upload(**params):
+        files = {"file": ("r.csv", roster, "text/csv")}
+        return alice.post("/students/import", files=files, params=params)
+
+    preview = upload(course_id=course["id"], dry_run="true").json()
+    assert [s["name"] for s in preview["created"]] == ["Cy"]
     assert [s["name"] for s in alice.get("/students").json()] == ["Ana", "Ben"]
+    imported = upload(course_id=course["id"]).json()
+    assert [s["name"] for s in imported["created"]] == ["Cy"]
+    assert [s["name"] for s in imported["existing"]] == ["Ana"]
+    assert len(alice.get(f"/courses/{course['id']}/students").json()) == 3
+    files = {"file": ("r.csv", roster, "text/csv")}
+    response = bob.post("/students/import", files=files, params={"course_id": course["id"]})
+    assert response.status_code == 404
+
+    assert alice.delete(f"/courses/{course['id']}").status_code == 204
+    assert [s["name"] for s in alice.get("/students").json()] == ["Ana", "Ben", "Cy"]

@@ -296,3 +296,45 @@ class ReportCourseRead(BaseModel):
 class StudentReportRead(BaseModel):
     student: StudentRead
     courses: list[ReportCourseRead]
+
+
+# --- stats & CSV ------------------------------------------------------------
+
+
+class BinRead(BaseModel):
+    lower: float
+    upper: float | None = Field(description="null for the open-ended bin above 100%")
+    count: int
+
+
+class AssignmentStatsRead(BaseModel):
+    assignment_id: uuid.UUID
+    points_possible: Num
+    include_missing: bool
+    enrolled: int
+    graded: int = Field(description="Enrolled students with a score (graded or late)")
+    missing: int
+    excused: int
+    ungraded: int
+    count: int = Field(
+        description="Scores in the statistics: graded, plus missing as 0 if included"
+    )
+    mean: float | None
+    median: float | None
+    std_dev: float | None = Field(description="Population standard deviation")
+    min: float | None
+    max: float | None
+    mean_percent: float | None
+    median_percent: float | None
+    histogram: list[BinRead] = Field(description="By percent of points possible")
+    letters: dict[str, int]
+
+
+class RosterImportResult(BaseModel):
+    dry_run: bool
+    created: list[StudentRead]
+    existing: list[StudentRead] = Field(
+        description="Rows whose email matched a student you already have"
+    )
+    enrolled: list[uuid.UUID]
+    already_enrolled: list[uuid.UUID]

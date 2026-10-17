@@ -15,6 +15,7 @@ from app.ownership import (
     get_owned_students,
     not_found,
 )
+from app.roster import enroll, roster
 from app.schemas import (
     CourseCreate,
     CourseRead,
@@ -25,16 +26,6 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/courses", tags=["courses"])
-
-
-def roster(db: Session, course_id: uuid.UUID) -> list[Student]:
-    stmt = (
-        select(Student)
-        .join(Enrollment, Enrollment.student_id == Student.id)
-        .where(Enrollment.course_id == course_id)
-        .order_by(Student.name, Student.id)
-    )
-    return list(db.scalars(stmt))
 
 
 @router.get("", response_model=list[CourseRead])
@@ -116,20 +107,10 @@ def enroll_students(
     """Enroll students. Idempotent: already-enrolled students are reported, not an error."""
     get_owned_course(db, user, course_id)
     students = get_owned_students(db, user, payload.student_ids)
-    ids = [s.id for s in students]
-    existing = set(
-        db.scalars(
-            select(Enrollment.student_id).where(
-                Enrollment.course_id == course_id, Enrollment.student_id.in_(ids)
-            )
-        )
-    )
-    new_ids = [i for i in ids if i not in existing]
-    db.add_all(Enrollment(course_id=course_id, student_id=i) for i in new_ids)
-    db.flush()
+    enrolled, already_enrolled = enroll(db, course_id, [s.id for s in students])
     return EnrollResult(
-        enrolled=new_ids,
-        already_enrolled=[i for i in ids if i in existing],
+        enrolled=enrolled,
+        already_enrolled=already_enrolled,
         roster=[StudentRead.model_validate(s) for s in roster(db, course_id)],
     )
 

@@ -10,7 +10,7 @@ optimal drop-lowest-N, assignment statistics, and CSV import/export.
 - [x] CRUD for courses, students, categories, assignments; enrollment; bulk grade upsert
 - [x] Grade calculation engine with tests
 - [x] `GET /courses/{id}/gradebook`, `GET /students/{id}/report`
-- [ ] `GET /assignments/{id}/stats`, CSV import/export
+- [x] `GET /assignments/{id}/stats`, CSV roster import, CSV gradebook export
 - [ ] Next.js dashboard with an editable grade grid
 - [ ] Deploy, seed demo data, case study
 
@@ -38,6 +38,9 @@ Interactive docs are at `/docs`.
 | DELETE | `/assignments/{id}/grades/{student_id}` | Clears a grade back to ungraded |
 | GET | `/courses/{id}/gradebook` | The full grid with each student's computed grade; see below |
 | GET | `/students/{id}/report` | Per-course breakdown for one student; `?course_id=` for one course |
+| GET | `/courses/{id}/gradebook/export` | The gradebook as a CSV download |
+| GET | `/assignments/{id}/stats` | Mean, median, SD, histogram, letter counts; `?include_missing=`, `?bin_width=` |
+| POST | `/students/import` | CSV roster upload (multipart `file`); `?course_id=` to enroll, `?dry_run=true` to preview |
 
 ```json
 PUT /grades
@@ -87,6 +90,45 @@ a student or parent can see exactly how the grade was reached.
 
 Both endpoints use a fixed number of queries however large the class is; a
 test checks this.
+
+### Assignment stats
+
+`GET /assignments/{id}/stats` describes enrolled students' scores: `mean`,
+`median`, `std_dev`, `min`, `max`, the mean and median as a percent of points
+possible, a `histogram` by percent, and counts per letter grade. It also
+returns how many students are `graded`, `missing`, `excused` and `ungraded`.
+
+- Excused and ungraded work is always left out. Missing work is left out by
+  default, since a 0 for work never turned in says more about effort than about
+  how the class understood the material; pass `include_missing=true` to count it as 0.
+- `std_dev` is the **population** standard deviation: the class is the whole
+  group being described, not a sample.
+- Histogram bins are `[0, 10)`, `[10, 20)`, …, `[90, 100]` (so a perfect score
+  lands in the top bin). Scores over 100% get an extra open-ended bin, and
+  `bin_width` can be any divisor of 100.
+
+### CSV
+
+**Roster import:** `POST /students/import` takes a CSV with a `name` column (or
+`first_name` and `last_name`) and an optional `email`. Header matching is
+forgiving: `Student Name`, `E-mail`, `Last Name` and the like all work, and
+extra columns are ignored. Files can be UTF-8 (with or without Excel's BOM) or
+Windows-1252, which is what Excel on Windows saves.
+
+- **All or nothing:** any bad row rejects the file, with a 422 listing every
+  problem by line number, so a teacher can fix them all in one pass.
+- **Safe to re-run:** a row whose email matches one of your students reuses that
+  student, unchanged. Rows without an email always create a new student.
+- `dry_run=true` returns exactly what would happen and saves nothing, which
+  makes a good preview step in the UI.
+
+**Gradebook export:** one row per student with each assignment's score (or
+`missing` / `excused`, blank if ungraded), each category's percent, the course
+percent and letter grade. The file starts with a BOM so Excel opens accented
+names correctly. Cells that a spreadsheet would run as a formula (starting
+with `=`, `+`, `-` or `@`) are prefixed with `'`, which blocks CSV
+injection through student names. The export's `Student` and `Email` columns
+are also a valid roster, so last term's gradebook can seed next term's course.
 
 Conventions:
 - Another teacher's resource is always a **404**, never a 403, so ids don't leak.
@@ -178,8 +220,11 @@ app/
   schemas.py         Pydantic request/response models
   ownership.py       "get it if the caller owns it, else 404" lookups
   gradebook.py       loads courses and grades and runs the grade engine
+  roster.py          enrollment and roster import
+  csv_io.py          roster parsing, gradebook CSV formatting
   routers/           me, courses (+ roster), students, categories, assignments, grades, reports
   grading/engine.py  grade calculation
+  grading/stats.py   assignment statistics
 supabase/migrations/ schema, signup trigger, RLS policies
 tests/
   test_isolation.py  every id-taking route, called by the wrong teacher, must 404
