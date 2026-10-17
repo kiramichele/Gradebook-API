@@ -1,0 +1,255 @@
+"""Row Level Security tests against real Postgres.
+
+These apply supabase/migrations to a throwaway database and check that the
+policies, not just the API's WHERE clauses, keep teachers apart. Queries here
+are deliberately unfiltered raw SQL.
+
+Skipped unless TEST_POSTGRES_URL points at a server where the user can create
+databases, e.g. postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+"""
+
+import os
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from sqlalchemy import create_engine, make_url, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.auth import CurrentUser
+from app.db import _apply_rls_context
+from app.main import create_app
+
+ROOT = Path(__file__).resolve().parent.parent
+ADMIN_URL = os.environ.get("TEST_POSTGRES_URL")
+
+pytestmark = pytest.mark.skipif(not ADMIN_URL, reason="TEST_POSTGRES_URL not set")
+
+
+@pytest.fixture(scope="module")
+def database() -> Iterator[tuple[Engine, Engine]]:
+    """Yield (admin engine, api engine) for a freshly migrated database."""
+    name = f"gradebook_test_{uuid.uuid4().hex[:8]}"
+    server = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
+    with server.connect() as conn:
+        conn.execute(text(f'create database "{name}"'))
+
+    admin_url = make_url(ADMIN_URL).set(database=name)
+    admin = create_engine(admin_url)
+    with admin.begin() as conn:
+        for path in [
+            ROOT / "tests/sql/supabase_stub.sql",
+            *sorted((ROOT / "supabase/migrations").glob("*.sql")),
+        ]:
+            conn.exec_driver_sql(path.read_text())
+
+    api_url = admin_url.set(username="gradebook_api", password="gradebook_api")
+    api = create_engine(api_url, connect_args={"prepare_threshold": None})
+    try:
+        yield admin, api
+    finally:
+        api.dispose()
+        admin.dispose()
+        with server.connect() as conn:
+            conn.execute(text(f'drop database "{name}" with (force)'))
+        server.dispose()
+
+
+def signup(admin: Engine, name: str) -> uuid.UUID:
+    user_id = uuid.uuid4()
+    with admin.begin() as conn:
+        conn.execute(
+            text(
+                "insert into auth.users values (:id, jsonb_build_object('name', cast(:n as text)))"
+            ),
+            {"id": user_id, "n": name},
+        )
+    return user_id
+
+
+def session_as(api: Engine, user_id: uuid.UUID) -> Session:
+    session = sessionmaker(bind=api)()
+    _apply_rls_context(session, CurrentUser(user_id, None, {"sub": str(user_id)}))
+    return session
+
+
+def count(session: Session, table: str) -> int:
+    return session.execute(text(f"select count(*) from {table}")).scalar_one()
+
+
+def test_signup_trigger_creates_teacher(database):
+    admin, _ = database
+    user_id = signup(admin, "Ms. Frizzle")
+    with admin.connect() as conn:
+        name = conn.execute(text("select name from teachers where id = :id"), {"id": user_id})
+        assert name.scalar_one() == "Ms. Frizzle"
+
+
+def test_session_runs_as_authenticated_even_after_rollback(database):
+    admin, api = database
+    with session_as(api, signup(admin, "T")) as s:
+        assert s.execute(text("select current_user")).scalar_one() == "authenticated"
+        s.rollback()
+        assert s.execute(text("select current_user")).scalar_one() == "authenticated"
+
+
+def test_teachers_are_isolated(database):
+    admin, api = database
+    alice, bob = signup(admin, "Alice"), signup(admin, "Bob")
+
+    with session_as(api, alice) as s:
+        course_id = s.execute(
+            text("insert into courses (name) values ('Physics') returning id")
+        ).scalar_one()
+        category_id = s.execute(
+            text(
+                "insert into categories (course_id, name, weight) "
+                "values (:c, 'HW', 50) returning id"
+            ),
+            {"c": course_id},
+        ).scalar_one()
+        assignment_id = s.execute(
+            text(
+                "insert into assignments (course_id, category_id, title, points_possible) "
+                "values (:c, :k, 'HW1', 10) returning id"
+            ),
+            {"c": course_id, "k": category_id},
+        ).scalar_one()
+        student_id = s.execute(
+            text("insert into students (name) values ('Sam') returning id")
+        ).scalar_one()
+        s.execute(
+            text("insert into enrollments values (:c, :s)"), {"c": course_id, "s": student_id}
+        )
+        s.execute(
+            text("insert into grades (assignment_id, student_id, score) values (:a, :s, 9)"),
+            {"a": assignment_id, "s": student_id},
+        )
+        s.commit()
+
+    with session_as(api, bob) as s:
+        for table in ["courses", "students", "enrollments", "categories", "assignments", "grades"]:
+            assert count(s, table) == 0, table
+        assert count(s, "teachers") == 1
+
+        updated = s.execute(
+            text("update courses set name = 'pwned' where id = :c"), {"c": course_id}
+        )
+        assert updated.rowcount == 0
+        assert s.execute(text("delete from grades")).rowcount == 0
+
+        with pytest.raises(DBAPIError, match="row-level security"):
+            s.execute(
+                text("insert into courses (teacher_id, name) values (:t, 'hijack')"), {"t": alice}
+            )
+        s.rollback()
+
+        with pytest.raises(DBAPIError, match="row-level security"):
+            s.execute(
+                text("insert into categories (course_id, name, weight) values (:c, 'x', 1)"),
+                {"c": course_id},
+            )
+        s.rollback()
+
+    with session_as(api, alice) as s:
+        assert count(s, "courses") == 1
+        assert s.execute(text("select name from courses")).scalar_one() == "Physics"
+
+
+def test_cannot_enroll_another_teachers_student(database):
+    admin, api = database
+    alice, bob = signup(admin, "Alice"), signup(admin, "Bob")
+    with session_as(api, bob) as s:
+        bobs_student = s.execute(
+            text("insert into students (name) values ('Bo') returning id")
+        ).scalar_one()
+        s.commit()
+    with session_as(api, alice) as s:
+        course_id = s.execute(
+            text("insert into courses (name) values ('Bio') returning id")
+        ).scalar_one()
+        with pytest.raises(DBAPIError, match="row-level security"):
+            s.execute(
+                text("insert into enrollments values (:c, :s)"), {"c": course_id, "s": bobs_student}
+            )
+
+
+def test_grades_require_enrollment(database):
+    admin, api = database
+    with session_as(api, signup(admin, "T")) as s:
+        course_id = s.execute(
+            text("insert into courses (name) values ('Art') returning id")
+        ).scalar_one()
+        category_id = s.execute(
+            text(
+                "insert into categories (course_id, name, weight) values (:c, 'HW', 1) returning id"
+            ),
+            {"c": course_id},
+        ).scalar_one()
+        assignment_id = s.execute(
+            text(
+                "insert into assignments (course_id, category_id, title, points_possible) "
+                "values (:c, :k, 'A', 10) returning id"
+            ),
+            {"c": course_id, "k": category_id},
+        ).scalar_one()
+        student_id = s.execute(
+            text("insert into students (name) values ('Sam') returning id")
+        ).scalar_one()
+        with pytest.raises(DBAPIError, match="row-level security"):
+            s.execute(
+                text("insert into grades (assignment_id, student_id, score) values (:a, :s, 9)"),
+                {"a": assignment_id, "s": student_id},
+            )
+
+
+def test_assignment_cannot_use_another_courses_category(database):
+    admin, api = database
+    with session_as(api, signup(admin, "T")) as s:
+        c1, c2 = (
+            s.execute(
+                text("insert into courses (name) values (:n) returning id"), {"n": n}
+            ).scalar_one()
+            for n in ("One", "Two")
+        )
+        category_id = s.execute(
+            text(
+                "insert into categories (course_id, name, weight) values (:c, 'HW', 1) returning id"
+            ),
+            {"c": c1},
+        ).scalar_one()
+        with pytest.raises(DBAPIError, match="foreign key"):
+            s.execute(
+                text(
+                    "insert into assignments (course_id, category_id, title, points_possible) "
+                    "values (:c, :k, 'A', 10)"
+                ),
+                {"c": c2, "k": category_id},
+            )
+
+
+def test_api_end_to_end_on_postgres(database, make_token, settings):
+    from fastapi.testclient import TestClient
+
+    from app.config import get_settings
+    from app.db import get_session_factory
+
+    admin, api = database
+    alice, bob = signup(admin, "Alice"), signup(admin, "Bob")
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_session_factory] = lambda: sessionmaker(
+        bind=api, expire_on_commit=False
+    )
+    client = TestClient(app)
+
+    def headers(user_id):
+        return {"Authorization": f"Bearer {make_token(user_id)}"}
+
+    assert client.get("/me", headers=headers(alice)).json()["name"] == "Alice"
+    course = client.post("/courses", json={"name": "Physics"}, headers=headers(alice)).json()
+    assert client.get(f"/courses/{course['id']}", headers=headers(bob)).status_code == 404
+    assert client.get("/courses", headers=headers(alice)).json()[0]["id"] == course["id"]
