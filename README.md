@@ -4,6 +4,9 @@ A teacher gradebook API built with FastAPI, SQLAlchemy, and Supabase (Postgres,
 Auth, Row Level Security). It does weighted category grading, excused work,
 optimal drop-lowest-N, assignment statistics, and CSV import/export.
 
+- **[Case study](docs/case-study.md):** the design decisions, the grading math, and how it's tested
+- **[Deploying](docs/deploy.md):** Supabase, then Railway (API), then Vercel (dashboard), then demo data
+
 ## Status
 
 - [x] Project setup, Supabase schema with RLS, JWT auth
@@ -12,7 +15,8 @@ optimal drop-lowest-N, assignment statistics, and CSV import/export.
 - [x] `GET /courses/{id}/gradebook`, `GET /students/{id}/report`
 - [x] `GET /assignments/{id}/stats`, CSV roster import, CSV gradebook export
 - [x] Next.js dashboard with an editable grade grid
-- [ ] Deploy, seed demo data, case study
+- [x] Deployment config (Railway + Vercel), pre-deploy RLS check, demo seeding, case study
+- [ ] Live deployment: follow [docs/deploy.md](docs/deploy.md)
 
 ## Endpoints
 
@@ -279,7 +283,10 @@ app/
   grading/engine.py  grade calculation
   grading/stats.py   assignment statistics
 supabase/migrations/ schema, signup trigger, RLS policies
-scripts/             export_openapi.py (feeds the web app's generated types)
+scripts/             export_openapi.py (web app types), check_deploy.py (pre-deploy RLS check),
+                     seed_demo.py (demo data through the API)
+docs/                case study, deployment guide
+Dockerfile, railway.json   the API's production image and Railway config
 web/                 Next.js dashboard (see above)
 tests/
   test_isolation.py  every id-taking route, called by the wrong teacher, must 404

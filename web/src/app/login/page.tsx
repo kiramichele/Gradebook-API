@@ -34,7 +34,12 @@ export default function LoginPage() {
     const { data, error } =
       mode === "sign-in"
         ? await auth.signInWithPassword({ email, password })
-        : await auth.signUp({ email, password, options: { data: { name } } });
+        : await auth.signUp({
+            email,
+            password,
+            // The confirmation link brings the teacher back to this deployment.
+            options: { data: { name }, emailRedirectTo: `${window.location.origin}/login` },
+          });
     setBusy(false);
     if (error) {
       setMessage({ kind: "error", text: error.message });

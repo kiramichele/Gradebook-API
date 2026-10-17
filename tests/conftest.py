@@ -1,6 +1,9 @@
+import importlib.util
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import jwt
 import pytest
@@ -16,6 +19,18 @@ from app.main import create_app
 from app.models import Base
 
 JWT_SECRET = "test-secret-at-least-32-bytes-long!!"
+SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+
+
+def load_script(name: str):
+    """Import scripts/<name>.py, which isn't a package."""
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # dataclasses look their module up here
+    spec.loader.exec_module(module)
+    return module
+
+
 SUPABASE_URL = "https://test-project.supabase.co"
 
 
@@ -136,6 +151,11 @@ class Api:
     ) -> dict:
         body = {"category_id": category_id, "title": title, "points_possible": points, **extra}
         return self._created(f"/courses/{course_id}/assignments", body)
+
+    def client_with_auth(self) -> TestClient:
+        """A separate client that sends this teacher's token on every request, for
+        code that takes an httpx client (TestClient is one)."""
+        return TestClient(self.client.app, headers=self.headers)
 
     def enroll(self, course_id: str, *student_ids: str) -> dict:
         response = self.post(f"/courses/{course_id}/enroll", json={"student_ids": student_ids})

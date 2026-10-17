@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.auth import CurrentUser
 from app.db import _apply_rls_context
 from app.main import create_app
-from tests.conftest import Api
+from tests.conftest import Api, load_script
 
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN_URL = os.environ.get("TEST_POSTGRES_URL")
@@ -336,3 +336,53 @@ def test_api_end_to_end_on_postgres(database, pg_client, auth_headers):
 
     assert alice.delete(f"/courses/{course['id']}").status_code == 204
     assert [s["name"] for s in alice.get("/students").json()] == ["Ana", "Ben", "Cy"]
+
+
+# --- the pre-deploy check ------------------------------------------------------
+
+
+def test_deploy_check_passes_on_a_correct_database(database):
+    _, api = database
+    results = load_script("check_deploy").check_database(api)
+    assert [r.name for r in results if not r.ok] == []
+    assert len(results) == 7
+
+
+@pytest.mark.parametrize(
+    ("break_sql", "fix_sql", "failing_check"),
+    [
+        (
+            "alter table grades disable row level security",
+            "alter table grades enable row level security",
+            "RLS enabled on every table",
+        ),
+        (
+            "create policy leak on students for select to anon using (true)",
+            "drop policy leak on students",
+            "Policies apply only to signed-in users",
+        ),
+        (
+            "create policy leak on courses for select to authenticated using (true)",
+            "drop policy leak on courses",
+            "A stranger sees no rows",
+        ),
+        (
+            "alter role authenticated bypassrls",
+            "alter role authenticated nobypassrls",
+            "authenticated role does not bypass RLS",
+        ),
+    ],
+)
+def test_deploy_check_catches_misconfigurations(database, break_sql, fix_sql, failing_check):
+    admin, api = database
+    with session_as(api, signup(admin, "T")) as s:  # so there's a row to leak
+        s.execute(text("insert into courses (name) values ('Secret')"))
+        s.commit()
+    with admin.begin() as conn:
+        conn.execute(text(break_sql))
+    try:
+        results = load_script("check_deploy").check_database(api)
+        assert failing_check in [r.name for r in results if not r.ok]
+    finally:
+        with admin.begin() as conn:
+            conn.execute(text(fix_sql))

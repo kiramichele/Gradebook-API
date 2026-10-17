@@ -5,6 +5,9 @@ begin
     if not exists (select 1 from pg_roles where rolname = 'authenticated') then
         create role authenticated nologin;
     end if;
+    if not exists (select 1 from pg_roles where rolname = 'anon') then
+        create role anon nologin;
+    end if;
     -- Stands in for Supabase's `postgres` role: a non-superuser login that
     -- can SET ROLE authenticated.
     if not exists (select 1 from pg_roles where rolname = 'gradebook_api') then
