@@ -1,0 +1,34 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import get_settings
+from app.routers import assignments, categories, courses, grades, me, reports, students
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+    app = FastAPI(
+        title="Gradebook API",
+        version="0.1.0",
+        description="Weighted category grading, drop-lowest-N, stats, and CSV import/export.",
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+    )
+
+    @app.get("/health", tags=["meta"])
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    app.include_router(me.router)
+    for module in (courses, students, categories, assignments, grades, reports):
+        app.include_router(module.router)
+    return app
+
+
+app = create_app()
