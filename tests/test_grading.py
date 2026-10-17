@@ -129,6 +129,30 @@ def test_empty_category_weight_is_redistributed(weighted_course):
     assert result.percent == pytest.approx((40 * 80 + 35 * 90) / 75)
 
 
+def test_effective_weights_show_redistribution(weighted_course):
+    cats, assignments = weighted_course
+    entries = [graded("t1", 80), graded("h1", 10), graded("h2", 8)]
+    tests, hw, quiz = compute_grade(cats, assignments, entries).categories
+    assert tests.effective_weight == pytest.approx(40 / 75)
+    assert hw.effective_weight == pytest.approx(35 / 75)
+    assert quiz.effective_weight is None
+
+
+def test_effective_weights_sum_to_one(weighted_course):
+    cats, assignments = weighted_course
+    entries = [graded("t1", 80), graded("h1", 10), graded("q1", 14)]
+    result = compute_grade(cats, assignments, entries)
+    assert sum(c.effective_weight for c in result.categories) == pytest.approx(1)
+    assert [c.effective_weight for c in result.categories] == pytest.approx([0.40, 0.35, 0.25])
+
+
+def test_zero_weight_category_has_no_effective_weight():
+    cats = [CategorySpec("tests", "Tests", 1), CategorySpec("practice", "Practice", 0)]
+    assignments = [AssignmentSpec("t1", "tests", 10), AssignmentSpec("p1", "practice", 10)]
+    result = compute_grade(cats, assignments, [graded("t1", 9), graded("p1", 5)])
+    assert [c.effective_weight for c in result.categories] == [1.0, None]
+
+
 def test_fully_excused_category_weight_is_redistributed(weighted_course):
     cats, assignments = weighted_course
     entries = [graded("t1", 80), GradeEntry("h1", E), GradeEntry("h2", E), graded("q1", 14)]

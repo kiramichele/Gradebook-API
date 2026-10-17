@@ -28,7 +28,7 @@ resolve the same way every time; floats appear only in the returned results.
 from __future__ import annotations
 
 from collections.abc import Hashable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from fractions import Fraction
 
@@ -86,6 +86,9 @@ class CategoryResult:
     dropped: tuple[Hashable, ...]
     excused: tuple[Hashable, ...]
     ungraded: tuple[Hashable, ...]
+    # Share of the course grade (0-1) after redistributing empty categories'
+    # weight; None when the category doesn't contribute.
+    effective_weight: float | None = None
 
 
 @dataclass(frozen=True)
@@ -233,7 +236,7 @@ def compute_grade(
             )
         by_category[assignment.category_id].append(assignment)
 
-    results: list[CategoryResult] = []
+    results: list[tuple[CategoryResult, Fraction | None]] = []
     weighted_sum = Fraction(0)
     weight_total = Fraction(0)
     for category in categories:
@@ -241,8 +244,9 @@ def compute_grade(
         if weight < 0:
             raise ValueError(f"Category {category.id!r} has negative weight")
         result, percent = _category_result(category, by_category[category.id], by_assignment)
-        results.append(result)
-        if percent is not None and weight > 0:
+        contributes = percent is not None and weight > 0
+        results.append((result, weight if contributes else None))
+        if contributes:
             weighted_sum += weight * percent
             weight_total += weight
 
@@ -250,5 +254,10 @@ def compute_grade(
     return GradeResult(
         percent=percent,
         letter=letter_for(percent, letter_scale),
-        categories=tuple(results),
+        categories=tuple(
+            replace(result, effective_weight=float(weight / weight_total))
+            if weight is not None
+            else result
+            for result, weight in results
+        ),
     )

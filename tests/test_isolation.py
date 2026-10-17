@@ -46,6 +46,8 @@ ROUTES = [
     ("DELETE", "/assignments/{assignment}", None),
     ("GET", "/assignments/{assignment}/grades", None),
     ("DELETE", "/assignments/{assignment}/grades/{student}", None),
+    ("GET", "/courses/{course}/gradebook", None),
+    ("GET", "/students/{student}/report", None),
     (
         "PUT",
         "/grades",

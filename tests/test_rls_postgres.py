@@ -286,6 +286,17 @@ def test_api_end_to_end_on_postgres(database, pg_client, auth_headers):
     )
     assert alice.delete(f"/categories/{category['id']}").status_code == 409
 
+    # Labs drop 1 of 1 -> nothing dropped (never the last); 11.25/12.5 and 12/12.5.
+    book = alice.get(f"/courses/{course['id']}/gradebook").json()
+    assert [(r["student"]["name"], r["percent"]) for r in book["students"]] == [
+        ("Ana", 90.0),
+        ("Ben", 96.0),
+    ]
+    (report,) = alice.get(f"/students/{ben['id']}/report").json()["courses"]
+    assert report["letter"] == "A"
+    assert bob.get(f"/courses/{course['id']}/gradebook").status_code == 404
+    assert bob.get(f"/students/{ana['id']}/report").status_code == 404
+
     assert bob.get(f"/courses/{course['id']}").status_code == 404
     assert bob.get(f"/assignments/{assignment['id']}/grades").status_code == 404
     response = bob.put(

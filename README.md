@@ -9,7 +9,7 @@ optimal drop-lowest-N, assignment statistics, and CSV import/export.
 - [x] Project setup, Supabase schema with RLS, JWT auth
 - [x] CRUD for courses, students, categories, assignments; enrollment; bulk grade upsert
 - [x] Grade calculation engine with tests
-- [ ] `GET /courses/{id}/gradebook`, `GET /students/{id}/report`
+- [x] `GET /courses/{id}/gradebook`, `GET /students/{id}/report`
 - [ ] `GET /assignments/{id}/stats`, CSV import/export
 - [ ] Next.js dashboard with an editable grade grid
 - [ ] Deploy, seed demo data, case study
@@ -36,6 +36,8 @@ Interactive docs are at `/docs`.
 | PUT | `/grades` | Bulk upsert for one assignment, all or nothing; see below |
 | GET | `/assignments/{id}/grades` | |
 | DELETE | `/assignments/{id}/grades/{student_id}` | Clears a grade back to ungraded |
+| GET | `/courses/{id}/gradebook` | The full grid with each student's computed grade; see below |
+| GET | `/students/{id}/report` | Per-course breakdown for one student; `?course_id=` for one course |
 
 ```json
 PUT /grades
@@ -54,6 +56,37 @@ PUT /grades
 above `points_possible` are allowed (extra credit). If any student isn't
 enrolled in the course, the request fails with 422 listing them, and nothing
 is written. The response is every grade for the assignment after the update.
+
+### Gradebook and report
+
+`GET /courses/{id}/gradebook` returns the course's `categories` and
+`assignments` (the grid's columns, by due date) and one row per enrolled
+student:
+
+```json
+{
+  "student": {"id": "…", "name": "Ana", "email": null},
+  "percent": 89.33,
+  "letter": "B+",
+  "grades": {"<assignment_id>": {"score": 80.0, "status": "graded"}},
+  "categories": [
+    {"category_id": "…", "percent": 100.0, "earned": 10.0, "possible": 10.0,
+     "effective_weight": 0.467, "dropped": ["<assignment_id>"]}
+  ]
+}
+```
+
+An assignment missing from `grades` hasn't been graded. `effective_weight` is
+the category's real share of the course grade: with Quizzes (25%) still
+empty, Tests (40%) and Homework (35%) count for 40/75 and 35/75.
+
+`GET /students/{id}/report` gives the same numbers nested by course, then
+category, then assignment. Each assignment has an `outcome` (`counted`,
+`dropped`, `excused` or `ungraded`) and the `earned` points that counted, so
+a student or parent can see exactly how the grade was reached.
+
+Both endpoints use a fixed number of queries however large the class is; a
+test checks this.
 
 Conventions:
 - Another teacher's resource is always a **404**, never a 403, so ids don't leak.
@@ -144,7 +177,8 @@ app/
   models.py          SQLAlchemy models (mirror the SQL migration)
   schemas.py         Pydantic request/response models
   ownership.py       "get it if the caller owns it, else 404" lookups
-  routers/           me, courses (+ roster), students, categories, assignments, grades
+  gradebook.py       loads courses and grades and runs the grade engine
+  routers/           me, courses (+ roster), students, categories, assignments, grades, reports
   grading/engine.py  grade calculation
 supabase/migrations/ schema, signup trigger, RLS policies
 tests/

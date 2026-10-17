@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated, ClassVar, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -228,3 +228,71 @@ class GradeRead(ORMModel):
     score: Num | None
     status: GradeStatus
     updated_at: datetime | None = None
+
+
+# --- gradebook & reports ----------------------------------------------------
+
+
+class CategoryGradeRead(BaseModel):
+    category_id: uuid.UUID
+    percent: float | None = Field(description="Category percent after drops; null if empty")
+    earned: float
+    possible: float
+    effective_weight: float | None = Field(
+        description="Share of the course grade (0-1) after redistributing empty categories"
+    )
+    dropped: list[uuid.UUID]
+
+
+class CellRead(BaseModel):
+    score: Num | None
+    status: GradeStatus
+
+
+class GradebookRowRead(BaseModel):
+    student: StudentRead
+    percent: float | None
+    letter: str | None
+    categories: list[CategoryGradeRead]
+    grades: dict[uuid.UUID, CellRead] = Field(
+        description="Keyed by assignment id. A missing key means not yet graded."
+    )
+
+
+class GradebookRead(BaseModel):
+    course: CourseRead
+    categories: list[CategoryRead]
+    assignments: list[AssignmentRead]
+    students: list[GradebookRowRead]
+
+
+Outcome = Literal["counted", "dropped", "excused", "ungraded"]
+
+
+class ReportAssignmentRead(BaseModel):
+    assignment: AssignmentRead
+    score: Num | None
+    status: GradeStatus | None = Field(description="null if no grade has been entered")
+    earned: float | None = Field(description="Points counted: 0 for missing, null if not counted")
+    outcome: Outcome
+
+
+class ReportCategoryRead(BaseModel):
+    category: CategoryRead
+    percent: float | None
+    earned: float
+    possible: float
+    effective_weight: float | None
+    assignments: list[ReportAssignmentRead]
+
+
+class ReportCourseRead(BaseModel):
+    course: CourseRead
+    percent: float | None
+    letter: str | None
+    categories: list[ReportCategoryRead]
+
+
+class StudentReportRead(BaseModel):
+    student: StudentRead
+    courses: list[ReportCourseRead]

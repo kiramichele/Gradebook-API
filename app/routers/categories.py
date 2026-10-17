@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, get_current_user
 from app.db import get_db
+from app.gradebook import category_order
 from app.models import Assignment, Category
 from app.ownership import flush_or_conflict, get_owned_category, get_owned_course
 from app.schemas import CategoryCreate, CategoryRead, CategoryUpdate
@@ -24,7 +25,7 @@ def list_categories(
     db: Session = Depends(get_db),
 ) -> list[Category]:
     get_owned_course(db, user, course_id)
-    stmt = select(Category).where(Category.course_id == course_id).order_by(Category.name)
+    stmt = select(Category).where(Category.course_id == course_id).order_by(*category_order())
     return list(db.scalars(stmt))
 
 

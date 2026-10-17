@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, get_current_user
 from app.db import get_db
+from app.gradebook import assignment_order
 from app.models import Assignment, Category
 from app.ownership import get_owned_assignment, get_owned_course
 from app.schemas import AssignmentCreate, AssignmentRead, AssignmentUpdate
@@ -36,9 +37,7 @@ def list_assignments(
     stmt = select(Assignment).where(Assignment.course_id == course_id)
     if category_id is not None:
         stmt = stmt.where(Assignment.category_id == category_id)
-    stmt = stmt.order_by(
-        Assignment.due_date.is_(None), Assignment.due_date, Assignment.created_at, Assignment.id
-    )
+    stmt = stmt.order_by(*assignment_order())
     return list(db.scalars(stmt))
 
 
