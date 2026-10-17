@@ -89,3 +89,65 @@ def auth_headers(make_token: TokenFactory) -> Callable[..., dict[str, str]]:
         return {"Authorization": f"Bearer {make_token(sub, **kwargs)}"}
 
     return factory
+
+
+class Api:
+    """A test client acting as one teacher, with shortcuts for building fixtures."""
+
+    def __init__(self, client: TestClient, headers: dict[str, str]):
+        self.client = client
+        self.headers = headers
+
+    def request(self, method: str, path: str, **kwargs):
+        return self.client.request(method, path, headers=self.headers, **kwargs)
+
+    def get(self, path: str, **kwargs):
+        return self.request("GET", path, **kwargs)
+
+    def post(self, path: str, **kwargs):
+        return self.request("POST", path, **kwargs)
+
+    def put(self, path: str, **kwargs):
+        return self.request("PUT", path, **kwargs)
+
+    def patch(self, path: str, **kwargs):
+        return self.request("PATCH", path, **kwargs)
+
+    def delete(self, path: str, **kwargs):
+        return self.request("DELETE", path, **kwargs)
+
+    def _created(self, path: str, body: dict) -> dict:
+        response = self.post(path, json=body)
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def course(self, name: str = "Algebra II", term: str = "Fall 2026") -> dict:
+        return self._created("/courses", {"name": name, "term": term})
+
+    def student(self, name: str = "Sam", email: str | None = None) -> dict:
+        return self._created("/students", {"name": name, "email": email})
+
+    def category(self, course_id: str, name: str = "Homework", weight=100, drop_lowest=0) -> dict:
+        body = {"name": name, "weight": weight, "drop_lowest": drop_lowest}
+        return self._created(f"/courses/{course_id}/categories", body)
+
+    def assignment(
+        self, course_id: str, category_id: str, title: str = "HW 1", points=10, **extra
+    ) -> dict:
+        body = {"category_id": category_id, "title": title, "points_possible": points, **extra}
+        return self._created(f"/courses/{course_id}/assignments", body)
+
+    def enroll(self, course_id: str, *student_ids: str) -> dict:
+        response = self.post(f"/courses/{course_id}/enroll", json={"student_ids": student_ids})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+
+@pytest.fixture
+def teacher(client: TestClient, auth_headers) -> Api:
+    return Api(client, auth_headers(uuid.uuid4()))
+
+
+@pytest.fixture
+def other_teacher(client: TestClient, auth_headers) -> Api:
+    return Api(client, auth_headers(uuid.uuid4()))

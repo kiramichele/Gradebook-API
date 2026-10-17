@@ -1,30 +1,40 @@
-"""Course CRUD.
-
-Queries filter on teacher_id even though RLS already does, so ownership is
-enforced in the API too (and in tests, which run on SQLite without RLS).
-Another teacher's course is a 404, never a 403, so ids don't leak.
-"""
+"""Courses and their rosters."""
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth import CurrentUser, get_current_user
 from app.db import get_db
-from app.models import Course
-from app.routers.me import get_or_create_teacher
-from app.schemas import CourseCreate, CourseRead, CourseUpdate
+from app.models import Course, Enrollment, Student
+from app.ownership import (
+    get_or_create_teacher,
+    get_owned_course,
+    get_owned_students,
+    not_found,
+)
+from app.schemas import (
+    CourseCreate,
+    CourseRead,
+    CourseUpdate,
+    EnrollRequest,
+    EnrollResult,
+    StudentRead,
+)
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
 
-def get_owned_course(db: Session, user: CurrentUser, course_id: uuid.UUID) -> Course:
-    course = db.scalar(select(Course).where(Course.id == course_id, Course.teacher_id == user.id))
-    if course is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Course not found")
-    return course
+def roster(db: Session, course_id: uuid.UUID) -> list[Student]:
+    stmt = (
+        select(Student)
+        .join(Enrollment, Enrollment.student_id == Student.id)
+        .where(Enrollment.course_id == course_id)
+        .order_by(Student.name, Student.id)
+    )
+    return list(db.scalars(stmt))
 
 
 @router.get("", response_model=list[CourseRead])
@@ -66,7 +76,7 @@ def update_course(
     db: Session = Depends(get_db),
 ) -> Course:
     course = get_owned_course(db, user, course_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    for key, value in payload.changes().items():
         setattr(course, key, value)
     db.flush()
     return course
@@ -78,5 +88,63 @@ def delete_course(
     user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
+    """Delete a course with its categories, assignments, enrollments and grades."""
     db.delete(get_owned_course(db, user, course_id))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- roster -----------------------------------------------------------------
+
+
+@router.get("/{course_id}/students", response_model=list[StudentRead])
+def list_roster(
+    course_id: uuid.UUID,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[Student]:
+    get_owned_course(db, user, course_id)
+    return roster(db, course_id)
+
+
+@router.post("/{course_id}/enroll", response_model=EnrollResult)
+def enroll_students(
+    course_id: uuid.UUID,
+    payload: EnrollRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> EnrollResult:
+    """Enroll students. Idempotent: already-enrolled students are reported, not an error."""
+    get_owned_course(db, user, course_id)
+    students = get_owned_students(db, user, payload.student_ids)
+    ids = [s.id for s in students]
+    existing = set(
+        db.scalars(
+            select(Enrollment.student_id).where(
+                Enrollment.course_id == course_id, Enrollment.student_id.in_(ids)
+            )
+        )
+    )
+    new_ids = [i for i in ids if i not in existing]
+    db.add_all(Enrollment(course_id=course_id, student_id=i) for i in new_ids)
+    db.flush()
+    return EnrollResult(
+        enrolled=new_ids,
+        already_enrolled=[i for i in ids if i in existing],
+        roster=[StudentRead.model_validate(s) for s in roster(db, course_id)],
+    )
+
+
+@router.delete("/{course_id}/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unenroll_student(
+    course_id: uuid.UUID,
+    student_id: uuid.UUID,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Remove a student from the roster. Their grades are kept and return if they re-enroll."""
+    get_owned_course(db, user, course_id)
+    enrollment = db.get(Enrollment, (course_id, student_id))
+    if enrollment is None:
+        raise not_found("Enrollment")
+    db.delete(enrollment)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import courses, me
+from app.routers import assignments, categories, courses, grades, me, students
 
 
 def create_app() -> FastAPI:
@@ -25,7 +25,8 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(me.router)
-    app.include_router(courses.router)
+    for module in (courses, students, categories, assignments, grades):
+        app.include_router(module.router)
     return app
 
 

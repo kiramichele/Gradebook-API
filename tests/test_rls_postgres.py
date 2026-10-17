@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.auth import CurrentUser
 from app.db import _apply_rls_context
 from app.main import create_app
+from tests.conftest import Api
 
 ROOT = Path(__file__).resolve().parent.parent
 ADMIN_URL = os.environ.get("TEST_POSTGRES_URL")
@@ -231,25 +232,68 @@ def test_assignment_cannot_use_another_courses_category(database):
             )
 
 
-def test_api_end_to_end_on_postgres(database, make_token, settings):
+@pytest.fixture
+def pg_client(database, settings):
     from fastapi.testclient import TestClient
 
     from app.config import get_settings
     from app.db import get_session_factory
 
-    admin, api = database
-    alice, bob = signup(admin, "Alice"), signup(admin, "Bob")
+    _, api = database
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_session_factory] = lambda: sessionmaker(
         bind=api, expire_on_commit=False
     )
-    client = TestClient(app)
+    with TestClient(app) as client:
+        yield client
 
-    def headers(user_id):
-        return {"Authorization": f"Bearer {make_token(user_id)}"}
 
-    assert client.get("/me", headers=headers(alice)).json()["name"] == "Alice"
-    course = client.post("/courses", json={"name": "Physics"}, headers=headers(alice)).json()
-    assert client.get(f"/courses/{course['id']}", headers=headers(bob)).status_code == 404
-    assert client.get("/courses", headers=headers(alice)).json()[0]["id"] == course["id"]
+def test_api_end_to_end_on_postgres(database, pg_client, auth_headers):
+    """The whole API under RLS, including the Postgres ON CONFLICT upsert and native enum."""
+    admin, _ = database
+    alice = Api(pg_client, auth_headers(signup(admin, "Alice")))
+    bob = Api(pg_client, auth_headers(signup(admin, "Bob")))
+
+    assert alice.get("/me").json()["name"] == "Alice"
+    course = alice.course("Physics")
+    category = alice.category(course["id"], "Labs", weight="40.5", drop_lowest=1)
+    assert category["weight"] == 40.5
+    assignment = alice.assignment(course["id"], category["id"], points="12.5")
+    ana, ben = alice.student("Ana", "ana@example.edu"), alice.student("Ben")
+    alice.enroll(course["id"], ana["id"], ben["id"])
+
+    def put(*grades):
+        response = alice.put(
+            "/grades", json={"assignment_id": assignment["id"], "grades": list(grades)}
+        )
+        assert response.status_code == 200, response.text
+        return {g["student_id"]: (g["score"], g["status"]) for g in response.json()}
+
+    assert put(
+        {"student_id": ana["id"], "score": "11.25"}, {"student_id": ben["id"], "status": "missing"}
+    ) == {
+        ana["id"]: (11.25, "graded"),
+        ben["id"]: (None, "missing"),
+    }
+    assert put({"student_id": ben["id"], "score": 12, "status": "late"}) == {
+        ana["id"]: (11.25, "graded"),
+        ben["id"]: (12.0, "late"),
+    }
+
+    assert (
+        alice.post("/students", json={"name": "Dup", "email": "ana@example.edu"}).status_code == 409
+    )
+    assert alice.delete(f"/categories/{category['id']}").status_code == 409
+
+    assert bob.get(f"/courses/{course['id']}").status_code == 404
+    assert bob.get(f"/assignments/{assignment['id']}/grades").status_code == 404
+    response = bob.put(
+        "/grades",
+        json={"assignment_id": assignment["id"], "grades": [{"student_id": ana["id"], "score": 0}]},
+    )
+    assert response.status_code == 404
+    assert bob.get("/students").json() == []
+
+    assert alice.delete(f"/courses/{course['id']}").status_code == 204
+    assert [s["name"] for s in alice.get("/students").json()] == ["Ana", "Ben"]

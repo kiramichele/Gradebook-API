@@ -7,13 +7,59 @@ optimal drop-lowest-N, assignment statistics, and CSV import/export.
 ## Status
 
 - [x] Project setup, Supabase schema with RLS, JWT auth
-- [x] Course CRUD (the pattern for the remaining resources)
+- [x] CRUD for courses, students, categories, assignments; enrollment; bulk grade upsert
 - [x] Grade calculation engine with tests
-- [ ] CRUD for students, categories, assignments; `POST /courses/{id}/enroll`; `PUT /grades`
 - [ ] `GET /courses/{id}/gradebook`, `GET /students/{id}/report`
 - [ ] `GET /assignments/{id}/stats`, CSV import/export
 - [ ] Next.js dashboard with an editable grade grid
 - [ ] Deploy, seed demo data, case study
+
+## Endpoints
+
+Every endpoint requires a Supabase access token (`Authorization: Bearer ...`).
+Interactive docs are at `/docs`.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/me` | The signed-in teacher |
+| GET, POST | `/courses` | |
+| GET, PATCH, DELETE | `/courses/{id}` | Delete cascades to categories, assignments, enrollments, grades |
+| GET | `/courses/{id}/students` | Roster, by name |
+| POST | `/courses/{id}/enroll` | `{"student_ids": [...]}`; idempotent, reports `enrolled` and `already_enrolled` |
+| DELETE | `/courses/{id}/students/{student_id}` | Unenroll; grades are kept and return on re-enrollment |
+| GET, POST | `/students` | Email optional, unique per teacher (409 otherwise), stored lowercase |
+| GET, PATCH, DELETE | `/students/{id}` | Delete removes the student's enrollments and grades everywhere |
+| GET, POST | `/courses/{id}/categories` | `weight`, `drop_lowest` |
+| GET, PATCH, DELETE | `/categories/{id}` | Delete is refused (409) while assignments use the category |
+| GET, POST | `/courses/{id}/assignments` | By due date, undated last; `?category_id=` filter |
+| GET, PATCH, DELETE | `/assignments/{id}` | The category must be in the same course (422) |
+| PUT | `/grades` | Bulk upsert for one assignment, all or nothing; see below |
+| GET | `/assignments/{id}/grades` | |
+| DELETE | `/assignments/{id}/grades/{student_id}` | Clears a grade back to ungraded |
+
+```json
+PUT /grades
+{
+  "assignment_id": "…",
+  "grades": [
+    {"student_id": "…", "score": 9.5},
+    {"student_id": "…", "score": 7, "status": "late"},
+    {"student_id": "…", "status": "missing"},
+    {"student_id": "…", "status": "excused"}
+  ]
+}
+```
+
+`status` defaults to `graded`. `graded` and `late` need a score, and scores
+above `points_possible` are allowed (extra credit). If any student isn't
+enrolled in the course, the request fails with 422 listing them, and nothing
+is written. The response is every grade for the assignment after the update.
+
+Conventions:
+- Another teacher's resource is always a **404**, never a 403, so ids don't leak.
+- PATCH changes only the fields you send. Sending `null` for a required field is a 422.
+- Unknown fields are rejected (422), which catches typos like `"pionts_possible"`.
+- Numbers come back as JSON numbers. Send decimals as strings (`"12.5"`) for exact input.
 
 ## How grades are calculated
 
@@ -97,8 +143,10 @@ app/
   db.py              engine + per-request session that applies RLS context
   models.py          SQLAlchemy models (mirror the SQL migration)
   schemas.py         Pydantic request/response models
-  routers/           /me, /courses
+  ownership.py       "get it if the caller owns it, else 404" lookups
+  routers/           me, courses (+ roster), students, categories, assignments, grades
   grading/engine.py  grade calculation
 supabase/migrations/ schema, signup trigger, RLS policies
 tests/
+  test_isolation.py  every id-taking route, called by the wrong teacher, must 404
 ```
