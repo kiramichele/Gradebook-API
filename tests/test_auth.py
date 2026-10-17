@@ -105,3 +105,9 @@ def test_hs256_token_rejected_when_only_jwks_configured(monkeypatch):
     )
     with pytest.raises(jwt.InvalidAlgorithmError):
         decode_token(token, settings)
+
+
+def test_cors_exposes_content_disposition(client):
+    response = client.get("/health", headers={"Origin": "http://localhost:3000"})
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert "content-disposition" in response.headers["access-control-expose-headers"].lower()

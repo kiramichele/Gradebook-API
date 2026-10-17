@@ -11,7 +11,7 @@ optimal drop-lowest-N, assignment statistics, and CSV import/export.
 - [x] Grade calculation engine with tests
 - [x] `GET /courses/{id}/gradebook`, `GET /students/{id}/report`
 - [x] `GET /assignments/{id}/stats`, CSV roster import, CSV gradebook export
-- [ ] Next.js dashboard with an editable grade grid
+- [x] Next.js dashboard with an editable grade grid
 - [ ] Deploy, seed demo data, case study
 
 ## Endpoints
@@ -197,6 +197,59 @@ supabase db push                   # or paste the migration into the SQL editor
 uvicorn app.main:app --reload      # http://localhost:8000/docs
 ```
 
+Then the dashboard, in a second terminal:
+
+```bash
+cd web
+npm install
+cp .env.example .env.local         # Supabase URL + publishable key, API URL
+npm run dev                        # http://localhost:3000
+```
+
+## Dashboard
+
+`web/` is a Next.js app for the teacher's side of the API. It talks only to
+the API. Supabase is used in the browser just for sign-in, and the access
+token goes to the API as a bearer token.
+
+- **Gradebook grid:** the editable grid works like a spreadsheet. Arrow keys,
+  Tab and Enter move around, typing replaces a cell, Enter or F2 edits it, and
+  Delete clears it. Enter `9.5`, `8L` (late), `M` (missing) or `EX` (excused).
+  Pasting a block copied from Sheets or Excel fills many cells at once, with
+  one bulk `PUT /grades` per assignment, and a paste with any invalid cell
+  saves nothing. Edits show immediately and are saved in order. Course and
+  category percents update from the server after each save. Missing, excused,
+  late and **dropped** cells are each styled, so drop-lowest is visible.
+- **Stats:** clicking an assignment header opens its mean, median, standard
+  deviation and histogram, with a toggle for counting missing work as 0.
+- **Roster:** add students by hand, or import a CSV. The import runs as a dry
+  run first and shows a preview before anything is saved.
+- **Setup:** categories (weight, drop lowest) and assignments, edited in place.
+- **Student report:** each category's real share of the grade and why each
+  assignment counted or didn't (dropped, excused, missing, late).
+- **Export:** downloads the gradebook CSV.
+
+The TypeScript types are generated from the API's OpenAPI schema
+(`npm run gen:api`), and CI fails if they're out of date, so the dashboard
+can't drift from the API.
+
+### Dashboard tests
+
+```bash
+cd web
+npm test                           # unit tests: cell parsing, grid movement, paste planning
+npx playwright test                # end to end against the real API and a production build
+```
+
+The end-to-end test starts the real FastAPI server on a fresh SQLite database
+and a production Next.js build, then goes through a teacher's first day:
+sign in, set up categories and assignments, add a student and import two more
+by CSV, type and paste grades, check the computed grades (including drops and
+excused work), open stats, export the CSV, read a student report, and confirm
+a second teacher sees nothing. Only Supabase Auth is stubbed: Playwright
+answers the sign-in request with a real HS256 token, which the API verifies
+as usual.
+
 ## Tests
 
 ```bash
@@ -226,6 +279,8 @@ app/
   grading/engine.py  grade calculation
   grading/stats.py   assignment statistics
 supabase/migrations/ schema, signup trigger, RLS policies
+scripts/             export_openapi.py (feeds the web app's generated types)
+web/                 Next.js dashboard (see above)
 tests/
   test_isolation.py  every id-taking route, called by the wrong teacher, must 404
 ```

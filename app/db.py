@@ -30,7 +30,13 @@ def get_engine() -> Engine:
     if url.startswith("postgresql"):
         # Supabase's transaction pooler doesn't support prepared statements.
         return create_engine(url, pool_pre_ping=True, connect_args={"prepare_threshold": None})
-    return create_engine(url, connect_args={"check_same_thread": False})
+    engine = create_engine(url, connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def enable_sqlite_foreign_keys(dbapi_connection, _record) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys = ON")
+
+    return engine
 
 
 @lru_cache

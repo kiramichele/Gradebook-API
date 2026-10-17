@@ -44,3 +44,28 @@ def test_course_validation(client, auth_headers):
 def test_courses_require_auth(client):
     assert client.get("/courses").status_code == 401
     assert client.post("/courses", json={"name": "x"}).status_code == 401
+
+
+def test_default_sqlite_engine_enforces_foreign_keys(tmp_path, monkeypatch):
+    import uuid as _uuid
+
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session
+
+    from app import db as db_module
+    from app.config import Settings
+    from app.models import Base, Course
+
+    monkeypatch.setattr(
+        db_module, "get_settings", lambda: Settings(database_url=f"sqlite:///{tmp_path}/x.db")
+    )
+    db_module.get_engine.cache_clear()
+    try:
+        engine = db_module.get_engine()
+        Base.metadata.create_all(engine)
+        with Session(engine) as session, pytest.raises(IntegrityError):
+            session.add(Course(teacher_id=_uuid.uuid4(), name="Orphan"))
+            session.flush()
+    finally:
+        db_module.get_engine.cache_clear()
