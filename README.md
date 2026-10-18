@@ -6,6 +6,27 @@ optimal drop-lowest-N, assignment statistics, and CSV import/export.
 
 - **[Case study](docs/case-study.md):** the design decisions, the grading math, and how it's tested
 - **[Deploying](docs/deploy.md):** Supabase, then Railway (API), then Vercel (dashboard), then demo data
+- **Interactive API docs:** every deployment serves them at `/docs`. Sign in to
+  the dashboard (or click **Try the demo**), copy your token with **API token**,
+  and paste it into **Authorize**.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    B["Teacher's browser<br/>Next.js on Vercel"] -- sign in --> SA[Supabase Auth]
+    B -- "REST + bearer JWT" --> API["FastAPI on Railway<br/>grading engine"]
+    API -- "per transaction:<br/>SET LOCAL ROLE authenticated<br/>+ the JWT's claims" --> PG[("Supabase Postgres<br/>RLS on every table")]
+    API -. verify token via JWKS .-> SA
+```
+
+- **The browser signs in with Supabase, then talks only to the API.** The
+  dashboard has no copy of the grading rules; every percent comes from the API.
+- **The API checks ownership in every query, and Postgres checks it again.**
+  Each transaction runs as the signed-in teacher, so the RLS policies apply to
+  the API's queries just as they would to a Supabase client.
+- **The grading engine is pure functions** ([`app/grading/`](app/grading/)),
+  with no database dependency, so it's tested on its own.
 
 ## Status
 
@@ -148,7 +169,7 @@ pure functions with no database dependency.
 | Status    | Effect                                                      |
 |-----------|-------------------------------------------------------------|
 | `graded`  | Counts its score                                            |
-| `late`    | Counts its score (no penalty yet)                           |
+| `late`    | Counts its score; flagged, never penalized (by design)      |
 | `missing` | Counts as 0                                                 |
 | `excused` | Removed from numerator **and** denominator                  |
 | no grade  | Ungraded; ignored until scored                              |
@@ -285,6 +306,7 @@ app/
 supabase/migrations/ schema, signup trigger, RLS policies
 scripts/             export_openapi.py (web app types), check_deploy.py (pre-deploy RLS check),
                      seed_demo.py (demo data through the API)
+.github/workflows/   ci.yml (tests, image, dashboard), reset-demo.yml (nightly demo restore)
 docs/                case study, deployment guide
 Dockerfile, railway.json   the API's production image and Railway config
 web/                 Next.js dashboard (see above)

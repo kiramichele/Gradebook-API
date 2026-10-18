@@ -256,6 +256,15 @@ label.checkbox {
   font-size: 0.9rem;
 }
 
+.demo-banner {
+  margin: 0;
+  padding: 6px 16px;
+  background: var(--warning-soft);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
 /* --- login & courses ----------------------------------------------------- */
 
 .auth-card {
@@ -265,6 +274,29 @@ label.checkbox {
 
 .auth-card h1 {
   margin-top: 0;
+}
+
+.demo-entry {
+  margin-bottom: 16px;
+}
+
+.demo-entry p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
 }
 
 .course-list {

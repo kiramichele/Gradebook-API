@@ -14,6 +14,21 @@ def test_health_needs_no_auth(client):
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_root_redirects_to_the_docs(client):
+    response = client.get("/", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/docs"
+    assert client.get("/docs").status_code == 200
+
+
+def test_docs_offer_bearer_auth_and_describe_every_tag(client):
+    schema = client.get("/openapi.json").json()
+    assert schema["components"]["securitySchemes"]["HTTPBearer"]["scheme"] == "bearer"
+    described = {tag["name"] for tag in schema["tags"]}
+    used = {tag for path in schema["paths"].values() for op in path.values() for tag in op["tags"]}
+    assert used <= described
+
+
 def test_missing_token_is_401(client):
     response = client.get("/me")
     assert response.status_code == 401

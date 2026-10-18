@@ -106,6 +106,8 @@ Supabase (Postgres + Auth)  <──  Railway (FastAPI, this repo's root)  <─�
 
 From your machine, with the repo's dev install (`pip install -e ".[dev]"`):
 
+**macOS / Linux (bash, zsh):**
+
 ```bash
 export SUPABASE_URL=https://<ref>.supabase.co
 export SUPABASE_ANON_KEY=<publishable key>
@@ -114,6 +116,23 @@ export SUPABASE_SERVICE_ROLE_KEY=<secret key>     # only needed with --create-us
 python scripts/seed_demo.py --api-url https://<api-domain> \
   --email demo@<your-domain> --password '<a long password>' --create-user
 ```
+
+**Windows (PowerShell):**
+
+```powershell
+$env:SUPABASE_URL = "https://<ref>.supabase.co"
+$env:SUPABASE_ANON_KEY = "<publishable key>"
+$env:SUPABASE_SERVICE_ROLE_KEY = "<secret key>"   # only needed with --create-user
+
+python scripts/seed_demo.py --api-url https://<api-domain> `
+  --email demo@<your-domain> --password '<a long password>' --create-user
+```
+
+PowerShell uses `$env:NAME = "value"` instead of `export`, and a backtick
+(`` ` ``, with nothing after it on the line) instead of `\` to continue a
+command. The variables last only for the current PowerShell window. In
+PowerShell, keep the quotes around the values and replace the whole
+`<...>` placeholder, angle brackets included.
 
 This creates a confirmed demo teacher and, **through the deployed API**,
 two courses (AP Chemistry, Algebra II), 26 fictional students imported by
@@ -125,6 +144,28 @@ visitors have edited it.
 Seeding uses the same token and endpoints as the dashboard, so a successful
 run also proves the deployment works end to end.
 
+### One-click demo login (optional)
+
+To let visitors in without signing up:
+
+1. **Vercel:** set `NEXT_PUBLIC_DEMO_EMAIL` and `NEXT_PUBLIC_DEMO_PASSWORD`
+   to the demo account above, and redeploy. The login page then shows
+   **Try the demo**, and a banner tells visitors the data is shared and
+   fictional.
+2. **GitHub → Settings → Secrets and variables → Actions:** add the
+   **variables** `DEMO_API_URL` (`https://<api-domain>`) and `DEMO_EMAIL`, and
+   the **secrets** `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+   `SUPABASE_SERVICE_ROLE_KEY` and `DEMO_PASSWORD`.
+3. **Actions → Reset demo → Run workflow** once to check it works.
+
+The demo password ships in the dashboard's JavaScript, so anyone can sign in
+as the demo teacher. They can edit or delete its data, and they can change
+its password. The [Reset demo](../.github/workflows/reset-demo.yml) workflow
+undoes all of that every night: it sets the password back, deletes **every**
+course and student in the account (`--wipe`), and seeds again, graded up to
+that day. Never point `--wipe` at a real teacher's account. RLS keeps
+visitors inside the demo account, so nothing they do reaches other teachers.
+
 ## 6. Smoke test
 
 - [ ] Sign in to the dashboard as the demo teacher, and see both courses.
@@ -134,6 +175,9 @@ run also proves the deployment works end to end.
 - [ ] Click an assignment header and see stats and a histogram.
 - [ ] Export CSV downloads `ap-chemistry-fall-2026.csv`.
 - [ ] Sign up as a second teacher in a private window and see **no** courses.
+- [ ] `https://<api-domain>/` opens the API docs. **Authorize** with the token
+      from the dashboard's **API token** button, then `GET /courses` returns
+      the demo courses.
 
 ## Troubleshooting
 

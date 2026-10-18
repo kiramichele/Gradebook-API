@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { DEMO_EMAIL, DEMO_PASSWORD, demoEnabled } from "@/lib/demo";
 import { supabase } from "@/lib/supabase";
 
 function nextPath(): string {
@@ -25,6 +26,19 @@ export default function LoginPage() {
   useEffect(() => {
     if (session) router.replace(nextPath());
   }, [session, router]);
+
+  async function signInAsDemo() {
+    setBusy(true);
+    setMessage(undefined);
+    const { error } = await supabase().auth.signInWithPassword({
+      email: DEMO_EMAIL,
+      password: DEMO_PASSWORD,
+    });
+    setBusy(false);
+    if (error) {
+      setMessage({ kind: "error", text: `The demo is unavailable right now (${error.message}).` });
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -51,6 +65,17 @@ export default function LoginPage() {
   return (
     <div className="auth-card card">
       <h1>{mode === "sign-in" ? "Sign in" : "Create your account"}</h1>
+      {demoEnabled && mode === "sign-in" && (
+        <div className="demo-entry stack">
+          <button type="button" className="primary" onClick={signInAsDemo} disabled={busy}>
+            Try the demo
+          </button>
+          <p className="muted">
+            A teacher account with two courses and 26 fictional students. No sign-up needed.
+          </p>
+          <p className="divider muted">or sign in</p>
+        </div>
+      )}
       <form onSubmit={submit} className="stack">
         {mode === "sign-up" && (
           <label>

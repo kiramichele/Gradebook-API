@@ -5,6 +5,10 @@ Next.js dashboard with a spreadsheet-style grade grid. The interesting parts
 are the grading math and making "teachers only ever see their own data" true
 at more than one layer.
 
+I built it as a teacher. I've taught high school electives in game design and
+computer science for five years, and math for two, keeping grades in Canvas
+and LiveGrades. The grading rules below come from that experience.
+
 ## The problem
 
 Gradebooks look simple, but a few things make them tricky:
@@ -19,14 +23,62 @@ Gradebooks look simple, but a few things make them tricky:
 - **It's student data.** A bug that shows one teacher another's roster is
   the worst failure the product can have.
 
+## Why the rules work this way
+
+Every grading rule here answers a question a student or parent has asked
+me, or one I've had to answer for myself.
+
+**An empty category doesn't count as zero.** Early in a term, one unscored
+category can make a grade look like a disaster. I've seen families panic over
+exactly that; my own parents did it. A gradebook that shows a failing grade
+before the first test is wrong, and it costs a teacher a week of emails. So
+a category with nothing graded yet drops out, and its weight is shared among
+the categories that have grades. The report shows each category's real share,
+so the number can be explained.
+
+**Missing, excused and late are three different things.** I had a student who
+was in and out of the hospital, and a student who always did the work but
+always turned it in late. A gradebook with only "score" or "zero" punishes
+both of them for the wrong reasons. Here, *excused* work disappears from both
+the points earned and the points possible, so the hospitalized student's grade
+reflects the work they could do. *Late* work keeps its full score and is only
+flagged, so the late student's grade reflects what they learned. *Missing* is
+the only status that counts as zero.
+
+**Late work isn't penalized, on purpose.** You never know what's going on in a
+student's life. A late mark is a record for the teacher to follow up on, not a
+deduction.
+
+**Drop lowest means what the teacher means.** In my class we drop the lowest
+coursework grade, and nobody argues about it. But "lowest" gets ambiguous as
+soon as assignments have different point values: dropping the lowest
+*percentage* can help a student less than dropping a different assignment. The
+engine always drops the one that helps the student most (the math is under
+[Key decisions](#optimal-drop-lowest-solved-exactly)). A teacher shouldn't have
+to work that out, and a student should never be hurt by a rule meant to help
+them.
+
+**Class averages leave out missing work.** I use assignment averages to decide
+what to reteach. If missing work counted as zero, an assignment a few students
+never turned in would look like one the whole class struggled with, and I'd
+reteach the wrong things. Missing work is a different problem, and it shows up
+elsewhere: in the grid, in the student's report, and in the stats when the
+toggle counts it as zero.
+
+**It works like a spreadsheet, and it takes CSV.** Moving grades between
+systems meant copying them across by hand. It was terrible: slow, and easy to
+get wrong. So the grid takes a block pasted straight from Sheets or Excel, a
+roster imports from the CSV another system exports, and a paste with any bad
+cell saves nothing rather than half of it.
+
 ## Architecture
 
 ```mermaid
 flowchart LR
-    T[Teacher's browser] -- sign in --> SA[Supabase Auth]
-    T -- "bearer JWT" --> API[FastAPI on Railway]
-    API -- "SET LOCAL ROLE authenticated<br/>+ JWT claims" --> PG[(Supabase Postgres<br/>with RLS)]
-    API -. JWKS .-> SA
+    B["Teacher's browser<br/>Next.js on Vercel"] -- sign in --> SA[Supabase Auth]
+    B -- "REST + bearer JWT" --> API["FastAPI on Railway<br/>grading engine"]
+    API -- "per transaction:<br/>SET LOCAL ROLE authenticated<br/>+ the JWT's claims" --> PG[("Supabase Postgres<br/>RLS on every table")]
+    API -. verify token via JWKS .-> SA
 ```
 
 The browser uses Supabase only to sign in. Every data request goes to the
@@ -162,8 +214,9 @@ as a smoke test. See [deploy.md](deploy.md).
 
 ## Trade-offs and what's next
 
-- **Late work isn't penalized.** It's recorded and shown, and a per-category
-  late penalty is the natural next rule.
+- **Late work isn't penalized, by design** (see
+  [above](#why-the-rules-work-this-way)). Schools that require a penalty would
+  need it as an opt-in, per-course setting, off by default.
 - **No grade history.** An audit log of who changed which grade, and when,
   is what a school would ask for first.
 - **One letter scale.** Each course should be able to set its own cutoffs;

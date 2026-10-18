@@ -1,0 +1,37 @@
+name: Reset demo
+
+# The public demo account's password is published on the login page, so
+# visitors can edit or delete its data, or change the password. This puts the
+# account back every night: password, then a clean, freshly graded gradebook.
+#
+# Setup (Settings -> Secrets and variables -> Actions):
+#   variables: DEMO_API_URL, DEMO_EMAIL
+#   secrets:   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, DEMO_PASSWORD
+# Until DEMO_API_URL is set, the job is skipped.
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 08:00 UTC, the middle of the night in the US
+  workflow_dispatch:
+
+jobs:
+  reset:
+    if: vars.DEMO_API_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install httpx
+      - name: Restore the demo account
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DEMO_PASSWORD: ${{ secrets.DEMO_PASSWORD }}
+        run: >
+          python scripts/seed_demo.py --api-url "${{ vars.DEMO_API_URL }}"
+          --email "${{ vars.DEMO_EMAIL }}" --password "$DEMO_PASSWORD"
+          --create-user --wipe

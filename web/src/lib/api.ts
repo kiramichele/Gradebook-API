@@ -32,7 +32,7 @@ function apiBaseUrl(raw: string | undefined): string {
   return value.replace(/\/+$/, "");
 }
 
-const API_URL = apiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+export const API_URL = apiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 
 export class ApiError extends Error {
   constructor(

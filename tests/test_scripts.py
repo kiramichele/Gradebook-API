@@ -113,3 +113,59 @@ def test_admin_headers_for_both_key_formats():
         "apikey": "eyJhbGciOi.legacy.jwt",
         "Authorization": "Bearer eyJhbGciOi.legacy.jwt",
     }
+
+
+def test_wipe_clears_the_account_but_not_other_teachers(teacher, other_teacher):
+    seed_demo.seed(teacher.client_with_auth(), as_of=AS_OF)
+    seed_demo.seed(other_teacher.client_with_auth(), as_of=AS_OF)
+    teacher.post("/courses", json={"name": "Added by a visitor"})
+
+    seed_demo.wipe(teacher.client_with_auth())
+    assert teacher.get("/courses").json() == []
+    assert teacher.get("/students").json() == []
+    assert len(other_teacher.get("/courses").json()) == 2
+    assert len(other_teacher.get("/students").json()) == 26
+
+
+def admin_api(monkeypatch, existing: list[dict]):
+    """Stand in for Supabase's admin API; return the requests it received."""
+    import httpx
+
+    calls = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path, request.url.params.get("page")))
+        if request.method == "POST":
+            if existing:
+                return httpx.Response(422, json={"msg": "User already registered"})
+            return httpx.Response(200, json={"id": "new"})
+        if request.method == "GET":
+            page = int(request.url.params["page"])
+            return httpx.Response(200, json={"users": existing[(page - 1) * 200 : page * 200]})
+        return httpx.Response(200, json={})
+
+    real_client = httpx.Client
+    monkeypatch.setattr(
+        seed_demo.httpx,
+        "Client",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handle), **kwargs),
+    )
+    return calls
+
+
+def test_create_user_creates_a_new_user(monkeypatch):
+    calls = admin_api(monkeypatch, existing=[])
+    seed_demo.create_user("https://x.supabase.co", "sb_secret_abc", "demo@example.edu", "pw")
+    assert calls == [("POST", "/auth/v1/admin/users", None)]
+
+
+def test_create_user_restores_an_existing_users_password(monkeypatch):
+    others = [{"id": f"u{i}", "email": f"t{i}@example.edu"} for i in range(250)]
+    calls = admin_api(monkeypatch, existing=[*others, {"id": "demo", "email": "Demo@Example.edu"}])
+    seed_demo.create_user("https://x.supabase.co", "sb_secret_abc", "demo@example.edu", "pw")
+    assert calls == [
+        ("POST", "/auth/v1/admin/users", None),
+        ("GET", "/auth/v1/admin/users", "1"),
+        ("GET", "/auth/v1/admin/users", "2"),
+        ("PUT", "/auth/v1/admin/users/demo", None),
+    ]

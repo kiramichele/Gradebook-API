@@ -8,6 +8,10 @@
     # Seed an account you already have (just signs in):
     python scripts/seed_demo.py --api-url ... --email you@school.edu --password '...'
 
+    # Restore the public demo account, as the nightly workflow does: reset the
+    # password, delete everything visitors added, and seed again.
+    python scripts/seed_demo.py ... --create-user --wipe
+
 Everything goes through the public API with the teacher's own token, so the
 demo data passes the same validation and RLS as real use, and seeding doubles
 as a smoke test of a fresh deployment. The data is generated from a fixed
@@ -113,6 +117,14 @@ def _check(response: httpx.Response) -> httpx.Response:
             f"{response.status_code}: {response.text}"
         )
     return response
+
+
+def wipe(client: httpx.Client) -> None:
+    """Delete every course and student in the account. Only for the demo account."""
+    for course in _check(client.get("/courses")).json():
+        _check(client.delete(f"/courses/{course['id']}"))
+    for student in _check(client.get("/students")).json():
+        _check(client.delete(f"/students/{student['id']}"))
 
 
 def seed(client: httpx.Client, *, as_of: date, seed: int = 2026, reset: bool = False) -> dict:
@@ -226,23 +238,38 @@ def _admin_headers(key: str) -> dict[str, str]:
     return {"apikey": key, "Authorization": f"Bearer {key}"}
 
 
+def _find_user_id(admin: httpx.Client, email: str) -> str:
+    page = 1
+    while True:
+        users = _check(admin.get("/users", params={"page": page, "per_page": 200})).json()
+        users = users.get("users", [])
+        for user in users:
+            if (user.get("email") or "").lower() == email.lower():
+                return user["id"]
+        if len(users) < 200:
+            raise SystemExit(f"{email} exists but wasn't found in the user list")
+        page += 1
+
+
 def create_user(supabase_url: str, service_key: str, email: str, password: str) -> None:
-    """Create a confirmed user with the admin API; fine if it already exists."""
-    response = httpx.post(
-        f"{supabase_url.rstrip('/')}/auth/v1/admin/users",
+    """Create a confirmed user with the admin API.
+
+    If the user already exists, its password and name are set back to the
+    demo's, since anyone signed in to a public demo can change them.
+    """
+    profile = {"password": password, "user_metadata": {"name": "Demo Teacher"}}
+    with httpx.Client(
+        base_url=f"{supabase_url.rstrip('/')}/auth/v1/admin",
         headers=_admin_headers(service_key),
-        json={
-            "email": email,
-            "password": password,
-            "email_confirm": True,
-            "user_metadata": {"name": "Demo Teacher"},
-        },
         timeout=30,
-    )
-    if response.status_code == 422 and "already" in response.text.lower():
-        print(f"{email} already exists; signing in")
-        return
-    _check(response)
+    ) as admin:
+        response = admin.post("/users", json={"email": email, "email_confirm": True, **profile})
+        if response.status_code == 422 and "already" in response.text.lower():
+            user_id = _find_user_id(admin, email)
+            _check(admin.put(f"/users/{user_id}", json=profile))
+            print(f"{email} already exists; restored its password")
+            return
+        _check(response)
     print(f"Created {email}")
 
 
@@ -255,6 +282,11 @@ def main() -> None:
         "--create-user", action="store_true", help="needs SUPABASE_SERVICE_ROLE_KEY"
     )
     parser.add_argument("--reset", action="store_true", help="replace existing demo courses")
+    parser.add_argument(
+        "--wipe",
+        action="store_true",
+        help="first delete EVERY course and student in the account (public demo only)",
+    )
     parser.add_argument(
         "--as-of",
         type=date.fromisoformat,
@@ -277,6 +309,8 @@ def main() -> None:
         headers={"Authorization": f"Bearer {token}"},
         timeout=60,
     ) as client:
+        if args.wipe:
+            wipe(client)
         summary = seed(client, as_of=args.as_of, reset=args.reset)
     print(
         f"Seeded {len(summary['courses'])} courses, {summary['students']} new students, "
