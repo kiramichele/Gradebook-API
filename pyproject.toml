@@ -31,6 +31,8 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Lets test modules import shared helpers as `tests.conftest`, however pytest is started.
+pythonpath = ["."]
 addopts = "-q"
 
 [tool.ruff]

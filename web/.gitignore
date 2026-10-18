@@ -6,3 +6,6 @@ next-env.d.ts
 test-results/
 playwright-report/
 e2e/.data/
+
+# Intermediate output of `npm run gen:api`; only the generated types are committed.
+openapi.json

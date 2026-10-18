@@ -65,7 +65,7 @@ jobs:
       - name: API types match the API
         run: |
           npm run gen:api
-          git diff --exit-code -- openapi.json src/lib/api-schema.ts \
+          git diff --exit-code -- src/lib/api-schema.ts \
             || (echo "::error::Run 'npm run gen:api' in web/ and commit the result" && exit 1)
       - run: npm run typecheck
       - run: npm test
