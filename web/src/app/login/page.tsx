@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -113,6 +114,9 @@ export default function LoginPage() {
           {busy ? "…" : mode === "sign-in" ? "Sign in" : "Create account"}
         </button>
       </form>
+      <p className="muted">
+        <Link href="/about">What is this?</Link> Read the case study.
+      </p>
       <p className="muted">
         {mode === "sign-in" ? "New here? " : "Already have an account? "}
         <button

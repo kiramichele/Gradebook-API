@@ -35,6 +35,7 @@ export function Header() {
           Gradebook
         </Link>
         <div className="topbar-user">
+          <Link href="/about">About</Link>
           <a href={`${API_URL}/docs`} target="_blank" rel="noreferrer">
             API docs
           </a>
