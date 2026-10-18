@@ -23,7 +23,16 @@ import type {
   Teacher,
 } from "./types";
 
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+// Tolerate the ways this gets mis-set in a hosting dashboard: blank, quoted,
+// padded, or a bare domain like "my-api.up.railway.app" with no scheme.
+function apiBaseUrl(raw: string | undefined): string {
+  let value = (raw ?? "").trim().replace(/^["']|["']$/g, "").trim();
+  if (!value) value = "http://localhost:8000";
+  if (!/^https?:\/\//i.test(value)) value = `https://${value}`;
+  return value.replace(/\/+$/, "");
+}
+
+const API_URL = apiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 
 export class ApiError extends Error {
   constructor(
@@ -69,7 +78,12 @@ async function request(
   const token = data.session?.access_token;
   if (!token) throw new ApiError(401, "You're signed out. Sign in again.");
 
-  const url = new URL(API_URL + path);
+  let url: URL;
+  try {
+    url = new URL(API_URL + path);
+  } catch {
+    throw new ApiError(0, `NEXT_PUBLIC_API_URL isn't a valid URL ("${API_URL}"). Fix it and redeploy.`);
+  }
   for (const [key, value] of Object.entries(options.query ?? {})) {
     if (value != null) url.searchParams.set(key, String(value));
   }
